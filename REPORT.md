@@ -64,6 +64,36 @@ the model re-calibrates everything from that history.
   five places. Max / NIHAONOON / HAMSTER were born after the history ended
   (20:50), so no forecast can name them — correctly absent.
 
+## v2 fix (2026-11-12 ~13:47 WIB) — rounding pushed a place sum over 1
+
+**The bug.** v1 was scored at the floor on the server (log_score −92.1, rank
+489/489, `valid: 0`): the forecast's `sizes` for place 1 summed to exactly
+**1.000001** (verified with exact Decimal arithmetic), violating RULES.txt
+"each place sums ≤ 1". The 6-decimal rounding of the bin probabilities is
+what pushed it over — place 2 sat at exactly 1.000000 too. Everything else
+in v1 was valid (probability sums 0.59–0.87, ≤100 rows/place, bins 0–81, all
+p in [0,1], all named mints in history, top5 distinct).
+
+**The fix (main.py only, model untouched).** New helper
+`enforce_place_caps` runs after rounding, for both `sizes` and
+`probabilities`: it works in integer micro-units, caps each place's sum at
+0.999999 (1 micro-unit of margin below 1), and takes the excess off that
+place's largest row (never below zero; a row trimmed to zero is dropped),
+re-checking until the place is in cap. On the rehearsal input the change is
+surgical: place-1 bin 45 trimmed 0.053322 → 0.053320 (−2 micro-units),
+place-2 bin 42 trimmed 0.060342 → 0.060341 (−1 micro-unit). It also drops
+104 `sizes` rows that were p = 0.0 in v1 (tail bins the greedy named while
+the unnamed share was ~0) — meaningless rows that could only ever score the
+floor; dropping them returns their bins to the unnamed share.
+
+**Verification (this session).** Two runs on the rehearsal input are
+byte-identical (deterministic, ~5.9 s each, limit 300 s). Exact Decimal
+validation of the new forecast: all checks pass (see FIX-REPORT.md) —
+sizes sums 0.999999 / 0.999999 / 0.999997 / 0.999999 / 0.999998;
+probabilities unchanged; top5 identical to v1; 16,379 bytes. Backtest
+re-run with the scorer: split A −44.635038 (v1: −44.635038, identical),
+split B −27.469524 (v1: −27.469504, −0.00002 nats) — no regression.
+
 ## Transcript gate
 
 `bundle --dry-run` finds this session:

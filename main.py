@@ -386,6 +386,36 @@ def main():
                 break
         return named
 
+    def enforce_place_caps(rows, cap_units=999999):
+        """v2 fix: after 6-decimal rounding, cap each place's sum at
+        cap_units micro-units (0.999999) so no place can exceed 1.
+        Rounding alone pushed place-1 sizes to 1.000001 in v1 and the
+        server marked the entry invalid (valid: 0, floor score -92.1).
+        Work in integer micro-units: the excess (a few units at most) is
+        taken off that place's largest row, never below zero; a row
+        trimmed to zero is dropped. Re-checks until the place is in cap.
+        The model, Monte Carlo and calibration are untouched."""
+        by_place = {}
+        for r in rows:
+            by_place.setdefault(r["place"], []).append(r)
+        kept = []
+        for place in sorted(by_place):
+            rs = by_place[place]
+            units = [int(round(r["p"] * 1_000_000)) for r in rs]
+            total = sum(units)
+            while total > cap_units:
+                j = max(range(len(rs)), key=lambda i: units[i])
+                if units[j] <= 0:
+                    break
+                cut = min(units[j], total - cap_units)
+                units[j] -= cut
+                total -= cut
+            for r, u in zip(rs, units):
+                if u > 0:
+                    r["p"] = u / 1_000_000
+                    kept.append(r)
+        return kept
+
     probabilities = []
     for k in range(1, places + 1):
         items = sorted(((candidates[i]["mint"], freq[i][k]) for i in range(n_cand)),
@@ -447,6 +477,12 @@ def main():
                 used.add(mint)
             if len(top5) == places:
                 break
+
+    # v2 fix: cap every place's rounded sum at 0.999999 (see
+    # enforce_place_caps) so the forecast can never breach the
+    # "each place sums <= 1" rule, for sizes and probabilities alike.
+    probabilities = enforce_place_caps(probabilities)
+    sizes = enforce_place_caps(sizes)
 
     doc = {"probabilities": probabilities, "top5": top5[:places], "sizes": sizes}
     os.makedirs(OUTPUT_DIR, exist_ok=True)
