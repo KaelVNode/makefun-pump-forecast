@@ -94,6 +94,63 @@ probabilities unchanged; top5 identical to v1; 16,379 bytes. Backtest
 re-run with the scorer: split A −44.635038 (v1: −44.635038, identical),
 split B −27.469524 (v1: −27.469504, −0.00002 nats) — no regression.
 
+## v3 (2026-11-12 ~14:00–15:30 WIB) — size centring: the Monte Carlo overshoots the place caps
+
+**The site's verdict on v2.** Practice score −43.1 (rank 472/507, `valid: 1`,
+`compliant: True`): order −21.45, size −21.67, agreement 34. The house
+baseline scored −40.41 (order −21.38, size −19.03, agreement 56). The whole
+2.7-nat gap is in **sizes** — order is tied. Yet the local backtest said v2
+beats the baseline by +5.3/+6.0 nats, on sizes too. The puzzle: why does the
+same size model win locally and lose on the practice?
+
+**Diagnosis (see V3-REPORT.md for the full evidence).** The MC place-cap
+mean sits **+0.56…+0.75 above the last mark's place caps** (mean +0.65; per
+place 4.23/4.07/3.97/3.90/3.84 vs last-mark 3.56/3.32/3.31/3.30/3.28), growing
+~+1.0 log10 per hour of horizon. The sds match the baseline's almost
+exactly (0.28–0.37 vs 0.35), so the gap is pure **centring**, not width.
+A scenario analysis (synthetic answers = last mark's caps grown at rate g)
+reproduces the site's size gap (−2.64) at a realized growth rate of
+**g ≈ +0.3 log/h** — the MC's +1.0/h is ~3× too fast. The place-cap level
+itself shows why: it grew +0.45/+0.53 per 10 min early in the rehearsal,
+then +0.08/+0.10 in the last two intervals — the explosive phase
+decelerated, but the MC's per-coin slopes extrapolate the early phase.
+The within-history splits never see this (their answers are all in the
+explosive phase, where the MC centre is right and v2 wins on sizes by
++2.8…+4.0) — so they cannot track the practice; the scenario analysis is
+the evaluation that does (it reproduces the site's v2-vs-baseline size gap
+to 0.1 nats).
+
+**The fix (main.py only, sizes only — Monte Carlo, frequencies,
+probabilities and top5 are byte-identical to v2).** The size centre is now
+the last mark's place-k cap plus the MC's predicted rise **shrunk by an
+adaptive factor α**: α = (recent top-5 level growth rate) / (peak rate over
+the history), recent = mean of the last 2 intervals, peak = mean of the 3
+fastest intervals, clamped to [0.3, 1.0]. When the level is still
+accelerating α ≈ 1 (the MC rise is trusted); when it has decelerated α
+shrinks the centre toward the last mark. On the rehearsal α = 0.3
+(recent 0.55/h vs peak 3.17/h); on split A α = 1.0, split B α = 1.0,
+split C α = 1.0 (fallback), split D α ≈ 0.58. The `enforce_place_caps`
+helper from v2 is untouched — every place sum stays ≤ 0.999999.
+
+**Verification (this session).** Two runs byte-identical (~5.9 s each);
+forecast 16,426 bytes; exact Decimal validation passes (see V3-REPORT.md):
+probabilities unchanged (sums 0.865/0.778/0.711/0.640/0.595), size sums all
+0.999999, top5 identical to v2. Backtests with the real main.py: split A
+−44.60 (v2 −44.60, no change), split B −27.49 (v2 −27.49), split C −54.96
+(v2 −54.96), split D −24.69 (v2 −24.78, +0.10). Scenario size score at the
+practice-implied g = 0.35: **−14.22** (v2 −18.47, baseline −15.74) — v3
+beats the baseline's size there by 1.5 nats, and beats v2's by 4.25.
+Translated to the site's practice (order unchanged at −21.45, same
+turnover/noise offset as v2): **≈ −38.9 total, above the house baseline's
+−40.41**. Rejected alternatives, all measured: fixed α = 0.5 (practice
++4.1 but split A −7.4), 50/50 and 70/30 mixtures with N(lastmark, 0.35)
+(practice +1.3, splits −0.8), widened sd (splits A/C better, B/D worse,
+practice mediocre). Caveat: the practice total is an estimate — the
+rehearsal holds no answer data after 20:50, so the +4.25 comes from the
+scenario analysis, not a direct grading; and the final's 7–13 h horizons
+are a different regime, where α is recomputed from that history's own
+level growth (it is data-driven, not tuned to the rehearsal).
+
 ## Transcript gate
 
 `bundle --dry-run` finds this session:
